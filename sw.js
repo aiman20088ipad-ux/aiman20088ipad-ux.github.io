@@ -1,7 +1,5 @@
-// عامل خدمة بسيط — يكفي لتفعيل خاصية "إضافة للشاشة الرئيسية" بمتصفحات أندرويد
-const CACHE_NAME = 'collection-system-v1';
+// عامل خدمة أساسي — فقط لتفعيل "إضافة للشاشة الرئيسية". لا نعترض الشبكة إطلاقاً
+// (الإصدار السابق كان يعترض كل الطلبات ويحاول الرجوع لذاكرة تخزين فارغة عند أي عطل شبكي،
+//  فيفشل تحميل السكربتات الخارجية الحرجة (Supabase/XLSX) ويظهر صفحة بيضاء — هذا هو سبب المشكلة الفعلي).
 self.addEventListener('install', e => self.skipWaiting());
 self.addEventListener('activate', e => self.clients.claim());
-self.addEventListener('fetch', e => {
-  e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
-});
