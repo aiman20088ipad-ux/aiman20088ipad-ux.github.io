@@ -675,6 +675,7 @@ function showApp(){
   $("#shell").style.display="flex";
   $("#menuToggle").addEventListener("click",openMobileMenu);
   $("#sidebarBackdrop").addEventListener("click",closeMobileMenu);
+  startAutoRefresh();
   render();
 }
 async function attemptLogin(){
@@ -703,8 +704,21 @@ async function attemptLogin(){
     errEl.classList.add("show");
   }
 }
+let autoRefreshTimer=null;
+const AUTO_REFRESH_KEYS=["customers","balances","dueDates","followups","notifications","reminders","notifTypeViews","categories","excelImports"];
+function startAutoRefresh(){
+  stopAutoRefresh();
+  autoRefreshTimer=setInterval(async()=>{
+    if(!ST || document.hidden) return; // لا تحدّث إذا التبويب مو ظاهر أصلاً (توفير موارد)
+    if($$(".overlay.show").length) return; // لا تحدّث إذا فيه نافذة مفتوحة (حماية من مسح بيانات نموذج قيد التعبئة)
+    try{ await refreshTables(AUTO_REFRESH_KEYS); render(); }catch(e){ /* صمت — لا نزعج المستخدم بخطأ شبكي عابر بالخلفية */ }
+  }, 5*60*1000); // كل 5 دقائق
+}
+function stopAutoRefresh(){ if(autoRefreshTimer){ clearInterval(autoRefreshTimer); autoRefreshTimer=null; } }
+
 async function logout(){
   if(ST) await insertActivityLog("logout","users",ST.currentUserId);
+  stopAutoRefresh();
   await sb.auth.signOut();
   ST=null;
   showLogin();
@@ -1043,9 +1057,14 @@ function renderSidebar(){
       <div class="avatar">${avatarInner}<span class="dot"></span></div>
       <div class="name">${esc(u.full_name)}</div>
       <div class="role">${esc(roleName(u))}</div>
-      <div style="margin-top:6px;"><label class="btn btn-outline btn-sm" style="cursor:pointer; font-size:10.5px; padding:3px 8px;">تغيير الصورة<input type="file" id="myPhotoInput" accept="image/*" style="display:none;"></label></div>`;
+      <div style="margin-top:6px; display:flex; gap:6px; justify-content:center; flex-wrap:wrap;">
+        <label class="btn btn-outline btn-sm" style="cursor:pointer; font-size:10.5px; padding:3px 8px;">تغيير الصورة<input type="file" id="myPhotoInput" accept="image/*" style="display:none;"></label>
+        <button class="btn btn-outline btn-sm" id="myChangePwBtn" style="font-size:10.5px; padding:3px 8px;">تغيير كلمة المرور</button>
+      </div>`;
     const photoInput=$("#myPhotoInput");
     if(photoInput) photoInput.addEventListener("change",handlePhotoUpload);
+    const myPwBtn=$("#myChangePwBtn");
+    if(myPwBtn) myPwBtn.addEventListener("click",openMyPasswordModal);
   }
 
   const unread=unreadNotifCount();
@@ -2091,6 +2110,71 @@ function lastLoginOf(userId){
   const log=ST.activityLogs.find(l=>l.user_id===userId && l.action_type==="login");
   return log ? log.created_at : null;
 }
+function openMyPasswordModal(){
+  const modal=$("#modalCategory");
+  modal.innerHTML=`
+  <div class="modal-header"><h2>تغيير كلمة المرور</h2><span class="x" data-close="overlayCategory">✕</span></div>
+  <div class="modal-body">
+    <div class="field"><label>كلمة المرور الجديدة</label><input type="password" id="myNewPw1" placeholder="8 أحرف على الأقل" autocomplete="new-password"></div>
+    <div class="field"><label>تأكيد كلمة المرور الجديدة</label><input type="password" id="myNewPw2" placeholder="أعد كتابتها" autocomplete="new-password"></div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-outline" data-close="overlayCategory">إلغاء</button>
+    <button class="btn btn-primary" id="saveMyPwBtn">حفظ</button>
+  </div>`;
+  $("#overlayCategory").classList.add("show");
+  $$('[data-close="overlayCategory"]').forEach(el=>el.addEventListener("click",()=>$("#overlayCategory").classList.remove("show")));
+  $("#saveMyPwBtn").addEventListener("click",async(e)=>{
+    const btn=e.currentTarget; if(btn.disabled) return;
+    const pw1=$("#myNewPw1").value, pw2=$("#myNewPw2").value;
+    if(!pw1 || pw1.length<8){ showToast("كلمة المرور يجب ألا تقل عن 8 أحرف",true); return; }
+    if(pw1!==pw2){ showToast("كلمتا المرور غير متطابقتين",true); return; }
+    btn.disabled=true; btn.textContent="جاري الحفظ...";
+    const {error}=await sb.auth.updateUser({password:pw1});
+    if(error){ showToast("تعذر التغيير: "+error.message,true); btn.disabled=false; btn.textContent="حفظ"; return; }
+    showToast("تم تغيير كلمة المرور بنجاح"); $("#overlayCategory").classList.remove("show");
+  });
+}
+
+function openResetPasswordModal(userId){
+  const u=ST.users.find(x=>x.id===userId);
+  const modal=$("#modalCategory");
+  modal.innerHTML=`
+  <div class="modal-header"><h2>إعادة تعيين كلمة مرور — ${esc(u?.full_name||"")}</h2><span class="x" data-close="overlayCategory">✕</span></div>
+  <div class="modal-body">
+    <div style="font-size:11.5px; color:var(--gray-500); margin-bottom:10px;">لن يحتاج المستخدم كلمة مروره القديمة — سيسجّل الدخول بالكلمة الجديدة مباشرة من الآن.</div>
+    <div class="field"><label>كلمة المرور الجديدة</label><input type="text" id="newPwInput" placeholder="8 أحرف على الأقل"></div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-outline" data-close="overlayCategory">إلغاء</button>
+    <button class="btn btn-primary" id="saveResetPwBtn">تأكيد إعادة التعيين</button>
+  </div>`;
+  $("#overlayCategory").classList.add("show");
+  $$('[data-close="overlayCategory"]').forEach(el=>el.addEventListener("click",()=>$("#overlayCategory").classList.remove("show")));
+  $("#saveResetPwBtn").addEventListener("click",async(e)=>{
+    const btn=e.currentTarget; if(btn.disabled) return;
+    const newPw=$("#newPwInput").value;
+    if(!newPw || newPw.length<8){ showToast("كلمة المرور يجب ألا تقل عن 8 أحرف",true); return; }
+    btn.disabled=true; btn.textContent="جاري التنفيذ...";
+    try{
+      const {data:{session}}=await sb.auth.getSession();
+      const resp=await fetch(SUPABASE_URL+"/functions/v1/admin-reset-password",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","Authorization":"Bearer "+session.access_token},
+        body:JSON.stringify({user_id:userId, new_password:newPw}),
+      });
+      const out=await resp.json();
+      if(!resp.ok) throw new Error(out.error||"تعذر إعادة التعيين");
+      logActivity("reset_password","users",userId,null,{});
+      showToast("تم تغيير كلمة المرور بنجاح");
+      $("#overlayCategory").classList.remove("show");
+    }catch(err){
+      showToast("تعذر إعادة التعيين: "+err.message,true);
+      btn.disabled=false; btn.textContent="تأكيد إعادة التعيين";
+    }
+  });
+}
+
 function renderUsers(c){
   if(!hasScreenAccess("users")){ c.innerHTML=`<div class="empty-state">لا تملك صلاحية الوصول لهذه الشاشة</div>`; return; }
   const fields=visibleFields("users");
@@ -2135,12 +2219,14 @@ function renderUsers(c){
   <tbody>${ST.users.map(u=>`<tr>${fields.map(f=>cellRenderers[f.key](u)).join("")}
     ${(canEdit||canDeactivate)?`<td style="white-space:nowrap;">
       ${canEdit?`<button class="btn btn-outline btn-sm" data-edituser="${u.id}">تعديل الصلاحيات</button>`:""}
+      ${isAdmin()?`<button class="btn btn-outline btn-sm" data-resetpw="${u.id}">إعادة تعيين كلمة المرور</button>`:""}
       ${canDeactivate?`<button class="btn btn-outline btn-sm" data-toggleuser="${u.id}">${u.status==="نشط"?"إيقاف":"تنشيط"}</button>`:""}
     </td>`:""}
   </tr>`).join("")}</tbody></table></div>`;
 
   const addBtn=$("#addUserBtn"); if(addBtn) addBtn.addEventListener("click",()=>openUserModal());
   $$("[data-edituser]").forEach(el=>el.addEventListener("click",()=>openUserModal(ST.users.find(u=>u.id===el.dataset.edituser))));
+  $$("[data-resetpw]").forEach(el=>el.addEventListener("click",()=>openResetPasswordModal(el.dataset.resetpw)));
   $$("[data-toggleuser]").forEach(el=>el.addEventListener("click",async()=>{
     const u=ST.users.find(x=>x.id===el.dataset.toggleuser);
     const old={status:u.status}; const newStatus=u.status==="نشط"?"موقوف":"نشط";
